@@ -14,9 +14,9 @@ rest_command:
         "name": "{{ name }}"
       }
 
-# Example automation: replace all entity IDs.
+# Example automation: replace all entity IDs and the Telegram config entry ID.
 automation:
-  - alias: "Security - record entrance when vibration is detected"
+  - alias: "Security - record entrance and send CP2 snapshot"
     mode: single
     triggers:
       - trigger: state
@@ -30,11 +30,41 @@ automation:
     variables:
       stamp: "{{ now().strftime('%Y%m%d_%H%M%S') }}"
     actions:
+      - action: telegram_bot.send_message
+        data:
+          config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
+          title: "ATTENZIONE!"
+          message: "Tentativo di ingresso dalla porta principale!"
+
       - parallel:
-          - action: rest_command.ezviz_cp2_capture
-            data:
-              duration: 60
-              name: "{{ stamp }}"
+          - sequence:
+              - action: rest_command.ezviz_cp2_capture
+                data:
+                  duration: 60
+                  name: "{{ stamp }}"
+                response_variable: cp2_response
+
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ cp2_response.status == 202
+                         and cp2_response.content.snapshot is defined }}
+                then:
+                  - action: telegram_bot.send_photo
+                    data:
+                      config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
+                      file: "{{ cp2_response.content.snapshot }}"
+                      caption: >
+                        Spioncino CP2 — {{ now().strftime('%d/%m/%Y alle %H:%M:%S') }}
+                else:
+                  - action: telegram_bot.send_message
+                    data:
+                      config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
+                      title: "Errore CP2"
+                      message: >
+                        Snapshot CP2 non disponibile. HTTP:
+                        {{ cp2_response.status | default('sconosciuto') }}
+
           - action: camera.record
             continue_on_error: true
             target:
