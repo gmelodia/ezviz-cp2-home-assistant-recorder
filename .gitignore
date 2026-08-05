@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.log
+*.ts
+*.mp4
+*.jpg
+*.jpeg
+*.jsonl
+ezviz_token.json
+cp2_media_key.txt
+recorder_status.json
+.DS_Store
