@@ -5,6 +5,7 @@ rest_command:
   ezviz_cp2_capture:
     url: "http://HOME_ASSISTANT_IP:8099/capture"
     method: POST
+    timeout: 10
     headers:
       X-API-Key: !secret ezviz_cp2_api_key
       Content-Type: "application/json"
@@ -13,6 +14,13 @@ rest_command:
         "duration": {{ duration | default(60) }},
         "name": "{{ name }}"
       }
+
+  ezviz_cp2_status:
+    url: "http://HOME_ASSISTANT_IP:8099/status"
+    method: GET
+    timeout: 10
+    headers:
+      X-API-Key: !secret ezviz_cp2_api_key
 
 # Example automation: replace all entity IDs and the Telegram config entry ID.
 automation:
@@ -29,8 +37,10 @@ automation:
              ['armed_away', 'armed_home', 'armed_night', 'armed_vacation'] }}
     variables:
       stamp: "{{ now().strftime('%Y%m%d_%H%M%S') }}"
+      cp2_snapshot: "/media/intrusioni/{{ stamp }}_cp2.jpg"
     actions:
       - action: telegram_bot.send_message
+        continue_on_error: true
         data:
           config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
           title: "ATTENZIONE!"
@@ -46,23 +56,55 @@ automation:
 
               - if:
                   - condition: template
-                    value_template: >
-                      {{ cp2_response.status == 202
-                         and cp2_response.content.snapshot is defined }}
+                    value_template: "{{ cp2_response.status == 202 }}"
                 then:
-                  - action: telegram_bot.send_photo
-                    data:
-                      config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
-                      file: "{{ cp2_response.content.snapshot }}"
-                      caption: >
-                        Spioncino CP2 — {{ now().strftime('%d/%m/%Y alle %H:%M:%S') }}
+                  - repeat:
+                      count: 8
+                      sequence:
+                        - delay:
+                            seconds: 5
+                        - action: rest_command.ezviz_cp2_status
+                          response_variable: cp2_status
+                        - if:
+                            - condition: template
+                              value_template: >
+                                {{ cp2_status.status == 200
+                                   and cp2_status.content.state in ['recording', 'completed', 'failed'] }}
+                          then:
+                            - stop: "CP2 startup finished"
+                              response_variable: cp2_status
+
+                  - if:
+                      - condition: template
+                        value_template: >
+                          {{ cp2_status is defined
+                             and cp2_status.status == 200
+                             and cp2_status.content.state in ['recording', 'completed']
+                             and cp2_status.content.snapshot == cp2_snapshot }}
+                    then:
+                      - action: telegram_bot.send_photo
+                        data:
+                          config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
+                          file: "{{ cp2_snapshot }}"
+                          caption: >
+                            Spioncino CP2 — {{ now().strftime('%d/%m/%Y alle %H:%M:%S') }}
+                    else:
+                      - action: telegram_bot.send_message
+                        continue_on_error: true
+                        data:
+                          config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
+                          title: "Errore CP2"
+                          message: >
+                            Snapshot CP2 non disponibile.
+                            Stato: {{ cp2_status.content.state | default('sconosciuto') }}
                 else:
                   - action: telegram_bot.send_message
+                    continue_on_error: true
                     data:
                       config_entry_id: YOUR_TELEGRAM_CONFIG_ENTRY_ID
                       title: "Errore CP2"
                       message: >
-                        Snapshot CP2 non disponibile. HTTP:
+                        Il recorder non ha accettato la richiesta. HTTP:
                         {{ cp2_response.status | default('sconosciuto') }}
 
           - action: camera.record
