@@ -68,8 +68,40 @@ def get_status() -> dict[str, Any]:
         return asdict(status)
 
 
+def capture_job(
+    options: dict[str, Any],
+    duration: int,
+    name: str,
+    snapshot_path: Path,
+) -> None:
+    """Wake the camera asynchronously, then run the recording job."""
+    try:
+        wake_camera(options, snapshot_path)
+    except Exception as exc:
+        update_status(
+            state="failed",
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            output=None,
+            snapshot=None,
+            error=str(exc),
+        )
+        log(f"Avvio registrazione fallito: {exc}")
+        capture_lock.release()
+        return
+
+    # record_job owns the lock from this point and releases it in its finally block.
+    record_job(
+        options,
+        duration,
+        name,
+        snapshot_path,
+        update_status,
+        capture_lock,
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "EZVIZCP2Recorder/0.6.1"
+    server_version = "EZVIZCP2Recorder/0.6.2"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         log(f'HTTP {self.address_string()}: {fmt % args}')
@@ -172,34 +204,20 @@ class Handler(BaseHTTPRequestHandler):
             error=None,
         )
 
-        try:
-            # Return 202 only after the JPEG exists, so Home Assistant can
-            # immediately pass the local file to telegram_bot.send_photo.
-            wake_camera(self.server.options, snapshot_path)  # type: ignore[attr-defined]
-        except Exception as exc:
-            capture_lock.release()
-            update_status(
-                state="failed",
-                finished_at=datetime.now().isoformat(timespec="seconds"),
-                output=None,
-                snapshot=None,
-                error=str(exc),
-            )
-            self.send_json(502, {"ok": False, "error": str(exc)})
-            return
-
+        # The potentially slow CP2 wakeup is deliberately moved off the HTTP
+        # request thread. Home Assistant rest_command defaults to a 10-second
+        # timeout, while a sleeping battery camera may need longer to return a JPEG.
         threading.Thread(
-            target=record_job,
+            target=capture_job,
             args=(
                 self.server.options,  # type: ignore[attr-defined]
                 duration,
                 name,
                 snapshot_path,
-                update_status,
-                capture_lock,
             ),
             daemon=True,
         ).start()
+
         self.send_json(
             202,
             {
@@ -208,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
                 "name": name,
                 "duration": duration,
                 "snapshot": str(snapshot_path),
+                "snapshot_ready": False,
                 "output": str(expected_output),
                 "status_url": "/status",
             },
