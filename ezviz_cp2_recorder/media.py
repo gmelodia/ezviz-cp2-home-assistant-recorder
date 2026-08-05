@@ -8,25 +8,31 @@ import sys
 import threading
 from typing import Any, Callable
 
-from common import MEDIA_DIR, WAKE_FILE, cli_prefix, log, run
+from common import MEDIA_DIR, cli_prefix, log, run
 
 StatusUpdater = Callable[..., None]
 
 
-def wake_camera(options: dict[str, Any]) -> None:
+def wake_camera(options: dict[str, Any], output: Path) -> Path:
+    """Wake the CP2 and save a JPEG that Home Assistant can access."""
     if not bool(options.get("wake_snapshot", True)):
-        return
-    WAKE_FILE.unlink(missing_ok=True)
+        raise RuntimeError(
+            "wake_snapshot è disattivato: impossibile produrre lo screenshot CP2"
+        )
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.unlink(missing_ok=True)
     command = cli_prefix(options, keyed=False) + [
         "--json", "save", "image",
         "--serial", str(options["serial"]),
         "--channel", str(int(options.get("channel", 1))),
-        "--output", str(WAKE_FILE),
+        "--output", str(output),
     ]
     result = run(command, timeout=60)
-    if result.returncode != 0 or not WAKE_FILE.exists():
+    if result.returncode != 0 or not output.exists() or output.stat().st_size == 0:
         raise RuntimeError("snapshot di risveglio non riuscito")
-    log(f"Snapshot di risveglio: {WAKE_FILE.stat().st_size} byte")
+    log(f"Snapshot CP2 salvato: {output} ({output.stat().st_size} byte)")
+    return output
 
 
 def probe_video(path: Path) -> dict[str, Any]:
@@ -86,6 +92,7 @@ def record_job(
     options: dict[str, Any],
     duration: int,
     name: str,
+    snapshot_path: Path,
     update_status: StatusUpdater,
     capture_lock: threading.Lock,
 ) -> None:
@@ -94,6 +101,7 @@ def record_job(
         started_at=datetime.now().isoformat(timespec="seconds"),
         finished_at=None,
         output=None,
+        snapshot=str(snapshot_path),
         duration=duration,
         error=None,
     )
@@ -103,7 +111,6 @@ def record_job(
     try:
         ts_path.unlink(missing_ok=True)
         mp4_path.unlink(missing_ok=True)
-        wake_camera(options)
         command = cli_prefix(options, keyed=True) + [
             "stream", "dump",
             "--serial", str(options["serial"]),
