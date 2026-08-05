@@ -9,8 +9,17 @@ import threading
 from typing import Any
 from urllib.parse import urlparse
 
-from common import PORT, STATUS_FILE, ensure_prerequisites, load_options, log, fail, sanitize_name
-from media import latest_failed_ts, record_job, recover_job
+from common import (
+    MEDIA_DIR,
+    PORT,
+    STATUS_FILE,
+    ensure_prerequisites,
+    fail,
+    load_options,
+    log,
+    sanitize_name,
+)
+from media import latest_failed_ts, record_job, recover_job, wake_camera
 
 
 @dataclass
@@ -19,6 +28,7 @@ class JobStatus:
     started_at: str | None = None
     finished_at: str | None = None
     output: str | None = None
+    snapshot: str | None = None
     duration: int | None = None
     error: str | None = None
 
@@ -59,7 +69,7 @@ def get_status() -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "EZVIZCP2Recorder/0.6.0"
+    server_version = "EZVIZCP2Recorder/0.6.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         log(f'HTTP {self.address_string()}: {fmt % args}')
@@ -149,9 +159,45 @@ class Handler(BaseHTTPRequestHandler):
         if not capture_lock.acquire(blocking=False):
             self.send_json(409, {"ok": False, "error": "capture already running", **get_status()})
             return
+
+        snapshot_path = MEDIA_DIR / f"{name}_cp2.jpg"
+        expected_output = MEDIA_DIR / f"{name}_cp2.mp4"
+        update_status(
+            state="starting",
+            started_at=datetime.now().isoformat(timespec="seconds"),
+            finished_at=None,
+            output=str(expected_output),
+            snapshot=str(snapshot_path),
+            duration=duration,
+            error=None,
+        )
+
+        try:
+            # Return 202 only after the JPEG exists, so Home Assistant can
+            # immediately pass the local file to telegram_bot.send_photo.
+            wake_camera(self.server.options, snapshot_path)  # type: ignore[attr-defined]
+        except Exception as exc:
+            capture_lock.release()
+            update_status(
+                state="failed",
+                finished_at=datetime.now().isoformat(timespec="seconds"),
+                output=None,
+                snapshot=None,
+                error=str(exc),
+            )
+            self.send_json(502, {"ok": False, "error": str(exc)})
+            return
+
         threading.Thread(
             target=record_job,
-            args=(self.server.options, duration, name, update_status, capture_lock),  # type: ignore[attr-defined]
+            args=(
+                self.server.options,  # type: ignore[attr-defined]
+                duration,
+                name,
+                snapshot_path,
+                update_status,
+                capture_lock,
+            ),
             daemon=True,
         ).start()
         self.send_json(
@@ -161,6 +207,8 @@ class Handler(BaseHTTPRequestHandler):
                 "accepted": True,
                 "name": name,
                 "duration": duration,
+                "snapshot": str(snapshot_path),
+                "output": str(expected_output),
                 "status_url": "/status",
             },
         )
@@ -191,7 +239,7 @@ def main() -> None:
 
     ensure_prerequisites(options)
     status = load_saved_status()
-    if status.state in {"recording", "recovering"}:
+    if status.state in {"starting", "recording", "recovering"}:
         update_status(
             state="interrupted",
             finished_at=datetime.now().isoformat(timespec="seconds"),
