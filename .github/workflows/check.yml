@@ -1,0 +1,16 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python sources
+        run: python -m py_compile ezviz_cp2_recorder/server.py ezviz_cp2_recorder/common.py ezviz_cp2_recorder/media.py ezviz_cp2_recorder/keyed_cli.py
