@@ -1,0 +1,45 @@
+# secrets.yaml
+# ezviz_cp2_api_key: "replace-with-the-same-long-random-value-used-in-the-app"
+
+rest_command:
+  ezviz_cp2_capture:
+    url: "http://HOME_ASSISTANT_IP:8099/capture"
+    method: POST
+    headers:
+      X-API-Key: !secret ezviz_cp2_api_key
+      Content-Type: "application/json"
+    payload: >
+      {
+        "duration": {{ duration | default(60) }},
+        "name": "{{ name }}"
+      }
+
+# Example automation: replace all entity IDs.
+automation:
+  - alias: "Security - record entrance when vibration is detected"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.front_door_vibration
+        to: "on"
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('alarm_control_panel.home_alarm') in
+             ['armed_away', 'armed_home', 'armed_night', 'armed_vacation'] }}
+    variables:
+      stamp: "{{ now().strftime('%Y%m%d_%H%M%S') }}"
+    actions:
+      - parallel:
+          - action: rest_command.ezviz_cp2_capture
+            data:
+              duration: 60
+              name: "{{ stamp }}"
+          - action: camera.record
+            continue_on_error: true
+            target:
+              entity_id: camera.indoor_entrance
+            data:
+              filename: "/media/intrusioni/{{ stamp }}_indoor.mp4"
+              duration: 60
+              lookback: 10
