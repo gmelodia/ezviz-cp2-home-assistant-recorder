@@ -59,20 +59,20 @@ automation:
                     value_template: "{{ cp2_response.status == 202 }}"
                 then:
                   - repeat:
-                      count: 8
                       sequence:
                         - delay:
                             seconds: 5
                         - action: rest_command.ezviz_cp2_status
                           response_variable: cp2_status
-                        - if:
-                            - condition: template
-                              value_template: >
-                                {{ cp2_status.status == 200
-                                   and cp2_status.content.state in ['recording', 'completed', 'failed'] }}
-                          then:
-                            - stop: "CP2 startup finished"
-                              response_variable: cp2_status
+                      until:
+                        - condition: template
+                          value_template: >
+                            {{
+                              (cp2_status is defined
+                               and cp2_status.status == 200
+                               and cp2_status.content.state in ['recording', 'completed', 'failed'])
+                              or repeat.index >= 8
+                            }}
 
                   - if:
                       - condition: template
