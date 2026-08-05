@@ -17,17 +17,21 @@ The App exposes a small authenticated HTTP API:
 
 - `GET /health` — unauthenticated health check;
 - `GET /status` — current or last recording status;
-- `POST /capture` — wake the CP2, record and save an MP4 clip;
+- `POST /capture` — queue a CP2 snapshot and MP4 recording;
 - `POST /recover` — remux the most recent preserved `_failed.ts` clip.
 
 A recording request performs these steps:
 
-1. triggers a cloud snapshot to wake the battery-powered CP2;
-2. opens the EZVIZ VTM stream;
-3. decrypts the encrypted HEVC payload using the cached camera media key;
-4. validates the stream with FFprobe;
-5. remuxes it to MP4 without re-encoding;
-6. saves it to `/media/intrusioni/<name>_cp2.mp4`.
+1. accepts the request immediately with HTTP `202`;
+2. triggers a cloud snapshot to wake the battery-powered CP2;
+3. saves the JPEG to `/media/intrusioni/<name>_cp2.jpg`;
+4. opens the EZVIZ VTM stream;
+5. decrypts the encrypted HEVC payload using the cached camera media key;
+6. validates the stream with FFprobe;
+7. remuxes it to MP4 without re-encoding;
+8. saves it to `/media/intrusioni/<name>_cp2.mp4`.
+
+The snapshot and recording are asynchronous. Poll `GET /status`; when `state` becomes `recording` or `completed`, the path in `snapshot` is ready for Home Assistant or Telegram.
 
 This is a recorder, not a permanent live-stream proxy. That design is intentional because the CP2 sleeps to preserve battery and its cloud stream did not prove reliable as a continuous HTTP feed.
 
@@ -87,7 +91,7 @@ curl -X POST \
   http://HOME_ASSISTANT_IP:8099/capture
 ```
 
-The endpoint returns `202 Accepted` because recording continues in the background.
+The endpoint returns `202 Accepted` immediately. At that point the returned snapshot path is reserved but the JPEG may not exist yet.
 
 Check the result:
 
@@ -96,12 +100,25 @@ curl -H 'X-API-Key: YOUR_LOCAL_API_KEY' \
   http://HOME_ASSISTANT_IP:8099/status
 ```
 
-A successful result contains:
+When the snapshot is ready:
+
+```json
+{
+  "ok": true,
+  "state": "recording",
+  "snapshot": "/media/intrusioni/front_door_20260805_210646_cp2.jpg",
+  "output": null,
+  "error": null
+}
+```
+
+A completed recording contains:
 
 ```json
 {
   "ok": true,
   "state": "completed",
+  "snapshot": "/media/intrusioni/front_door_20260805_210646_cp2.jpg",
   "output": "/media/intrusioni/front_door_20260805_210646_cp2.mp4",
   "error": null
 }
@@ -111,7 +128,9 @@ Only one recording or recovery job can run at a time. Durations are limited to 5
 
 ## Home Assistant automation
 
-A complete `rest_command` and automation example is available in [`examples/home-assistant.yaml`](examples/home-assistant.yaml). It shows how to record the CP2 and an indoor RTSP camera in parallel when a vibration sensor fires while the alarm is armed.
+A complete `rest_command` and automation example is available in [`examples/home-assistant.yaml`](examples/home-assistant.yaml). It submits the capture request, polls `/status` until the CP2 snapshot is ready, sends that JPEG through Telegram, and records an indoor camera in parallel.
+
+Home Assistant `rest_command` defaults to a 10-second timeout. The recorder therefore never waits for the sleeping CP2 before returning `202`; the potentially slow wakeup happens in the background.
 
 ## Troubleshooting
 
@@ -120,6 +139,7 @@ A complete `rest_command` and automation example is available in [`examples/home
 - **`flusso HEVC non decifrato correttamente`** — verify the cached media key; try `decrypt_codec: hevc-encrypted-header` only if `hevc` fails.
 - **A `_cp2_failed.ts` file remains** — call `POST /recover`, then inspect `GET /status`.
 - **The device times out** — close the EZVIZ mobile live view and retry; only one cloud media session may be available.
+- **Telegram cannot read the JPEG** — add `/media` to `homeassistant.allowlist_external_dirs`.
 
 ## Security notes
 
