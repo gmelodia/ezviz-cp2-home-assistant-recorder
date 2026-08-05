@@ -1,5 +1,5 @@
 name: "EZVIZ CP2 Recorder"
-version: "0.6.0"
+version: "0.6.1"
 slug: "ezviz_cp2_proxy"
 description: "Record on demand from an EZVIZ CP2 cloud VTM stream and save MP4 clips in Home Assistant media."
 url: "https://github.com/gmelodia/ezviz-cp2-home-assistant-recorder"
