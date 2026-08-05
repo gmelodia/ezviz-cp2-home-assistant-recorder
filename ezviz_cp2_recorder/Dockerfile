@@ -17,7 +17,5 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir pyezvizapi==1.0.5.0
 
-COPY keyed_cli.py /keyed_cli.py
-COPY server.py /server.py
-
+COPY *.py /
 CMD ["python", "-u", "/server.py"]
