@@ -1,0 +1,53 @@
+name: "EZVIZ CP2 Recorder"
+version: "0.6.0"
+slug: "ezviz_cp2_proxy"
+description: "Record on demand from an EZVIZ CP2 cloud VTM stream and save MP4 clips in Home Assistant media."
+url: "https://github.com/gmelodia/ezviz-cp2-home-assistant-recorder"
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+init: false
+stage: experimental
+
+ports:
+  8099/tcp: 8099
+ports_description:
+  8099/tcp: "Local HTTP recording API"
+
+map:
+  - type: addon_config
+    read_only: false
+  - type: media
+    read_only: false
+
+watchdog: "tcp://[HOST]:[PORT:8099]"
+
+options:
+  username: ""
+  password: ""
+  serial: ""
+  region: "apiieu.ezvizlife.com"
+  api_key: ""
+  channel: 1
+  default_duration: 60
+  decrypt_codec: "hevc"
+  wake_snapshot: true
+  request_mfa_code: false
+  mfa_code: ""
+  debug: false
+
+schema:
+  username: str
+  password: password
+  serial: str
+  region: str
+  api_key: password
+  channel: int(0,10)
+  default_duration: int(5,120)
+  decrypt_codec: list(hevc|hevc-encrypted-header|auto)
+  wake_snapshot: bool
+  request_mfa_code: bool
+  mfa_code: password?
+  debug: bool
